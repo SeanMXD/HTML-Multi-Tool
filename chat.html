@@ -1,156 +1,172 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Peer-to-Peer Walkie-Talkie</title>
-<style>
-body {
-  font-family: sans-serif;
-  text-align: center;
-  padding: 20px;
-}
-#status {
-  margin-bottom: 10px;
-}
-#startButton {
-  padding: 10px 20px;
-  font-size: 16px;
-  cursor: pointer;
-}
-#pttButton {
-  padding: 50px;
-  font-size: 24px;
-  cursor: pointer;
-  border-radius: 50%;
-  background-color: lightgray;
-}
-#pttButton.disabled {
-  background-color: #eee;
-  cursor: default;
-}
+    <title>Peer-to-Peer Walkie-Talkie</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
 
-</style>
+        #status {
+            margin-bottom: 10px;
+        }
+
+        #startButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #pttButton {
+            padding: 50px;
+            font-size: 24px;
+            cursor: pointer;
+            border-radius: 50%;
+            background-color: lightgray;
+        }
+
+        #pttButton.disabled {
+            background-color: #eee;
+            cursor: default;
+        }
+
+        #remoteAudio {
+            display: none; /* Hide audio element initially */
+        }
+
+        #roomIdInput{
+          margin-bottom: 10px;
+        }
+
+    </style>
 </head>
 <body>
-  <h1>Peer-to-Peer Walkie-Talkie</h1>
-  <div id="status">Initializing...</div>
-  <button id="startButton">Start Connection</button>
-  <br><br>
-  <button id="pttButton" disabled>Push to Talk</button>
+    <h1>Peer-to-Peer Walkie-Talkie</h1>
+    <input type="text" id="roomIdInput" placeholder="Enter Room ID">
+    <div id="status">Initializing...</div>
+    <button id="startButton">Start Connection</button>
+    <br><br>
+    <button id="pttButton" disabled>Push to Talk</button>
+    <audio id="remoteAudio" autoplay></audio>
 
-  <script>
-    const statusDiv = document.getElementById('status');
-    const startButton = document.getElementById('startButton');
-    const pttButton = document.getElementById('pttButton');
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        const statusDiv = document.getElementById('status');
+        const startButton = document.getElementById('startButton');
+        const pttButton = document.getElementById('pttButton');
+        const remoteAudio = document.getElementById('remoteAudio');
+        const roomIdInput = document.getElementById('roomIdInput');
 
-    let peerConnection;
-    let localStream;
-    let remoteStream;
-    let dataChannel;
+        let peerConnection;
+        let localStream;
+        let remoteStream;
+        let socket;
+        let roomId;
 
-    startButton.addEventListener('click', startConnection);
-    pttButton.addEventListener('mousedown', startTalking);
-    pttButton.addEventListener('mouseup', stopTalking);
+        startButton.addEventListener('click', startConnection);
+        pttButton.addEventListener('mousedown', startTalking);
+        pttButton.addEventListener('mouseup', stopTalking);
 
-    async function startConnection() {
-      try {
-        statusDiv.textContent = 'Requesting media access...';
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        async function startConnection() {
+            try {
+                roomId = roomIdInput.value.trim();
+                if (!roomId) {
+                    statusDiv.textContent = "Please enter a Room ID.";
+                    return;
+                }
 
-        statusDiv.textContent = 'Creating peer connection...';
-        peerConnection = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+                statusDiv.textContent = 'Requesting media access...';
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        peerConnection.onicecandidate = handleIceCandidate;
-        peerConnection.ontrack = handleRemoteStreamAdded;
-        peerConnection.oniceconnectionstatechange = handleConnectionStateChange;
-        peerConnection.ondatachannel = receiveDataChannel;
+                statusDiv.textContent = 'Connecting to signaling server...';
+                socket = io('https://socket-io-chat-h9jt.onrender.com'); // Using a publicly available server.
 
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                socket.on('connect', () => {
+                    statusDiv.textContent = 'Connected to signaling server. Joining room...';
+                    socket.emit('join', roomId);
+                });
 
-        dataChannel = peerConnection.createDataChannel("chat");
+                socket.on('joined', (room) => {
+                    statusDiv.textContent = `Joined room: ${room}`;
+                    initializePeerConnection();
+                });
 
-        createOffer();
+                socket.on('offer', async (offer) => {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    socket.emit('answer', { answer, roomId });
+                });
 
-        startButton.disabled = true;
-        pttButton.disabled = false;
-        statusDiv.textContent = 'Ready to talk!';
-      } catch (error) {
-        statusDiv.textContent = `Error: ${error.message}`;
-        console.error('Error starting connection:', error);
-      }
-    }
+                socket.on('answer', async (answer) => {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                });
 
-    function receiveDataChannel(event){
-      dataChannel = event.channel;
-      dataChannel.onmessage = handleDataChannelMessage;
-    }
+                socket.on('ice-candidate', async (candidate) => {
+                    try{
+                        await peerConnection.addIceCandidate(candidate);
+                    } catch (e){
+                        console.error('Error adding ice candidate', e);
+                    }
+                });
 
-    function handleDataChannelMessage(event){
-      console.log("Data channel message: ", event.data);
-    }
+                startButton.disabled = true;
+                pttButton.disabled = false;
+                statusDiv.textContent = 'Ready to talk!';
 
-    async function createOffer() {
-      try {
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-
-        const offerString = btoa(JSON.stringify(offer));
-        statusDiv.textContent = `Offer: ${offerString} (Paste this into the other peer's browser)`;
-
-        const answerString = prompt("Paste the answer here:");
-        if(answerString){
-          const answer = JSON.parse(atob(answerString));
-          await peerConnection.setRemoteDescription(answer);
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                console.error('Error starting connection:', error);
+            }
         }
 
-      } catch (error) {
-        console.error('Error creating offer:', error);
-        statusDiv.textContent = `Error creating offer: ${error.message}`;
-      }
-    }
+        function initializePeerConnection() {
+            peerConnection = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
 
-    async function handleIceCandidate(event) {
-      if (event.candidate) {
-        // In a real-world scenario, you'd send this to the other peer via a signaling server.
-        // For this simplified example, we'll just log it.
-        console.log('ICE candidate:', event.candidate);
-      }
-    }
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', { candidate: event.candidate, roomId });
+                }
+            };
 
-    function handleRemoteStreamAdded(event) {
-      remoteStream = event.streams[0];
-      //In a real application, you would attach the remote stream to an audio element.
-      console.log("Remote stream added.");
-    }
+            peerConnection.ontrack = (event) => {
+                remoteStream = event.streams[0];
+                remoteAudio.srcObject = remoteStream;
+            };
 
-    function handleConnectionStateChange() {
-      statusDiv.textContent = `Connection state: ${peerConnection.iceConnectionState}`;
-      if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'closed') {
-        startButton.disabled = false;
-        pttButton.disabled = true;
-      }
-    }
+            peerConnection.oniceconnectionstatechange = () => {
+                statusDiv.textContent = `Connection state: ${peerConnection.iceConnectionState}`;
+                if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'closed') {
+                    startButton.disabled = false;
+                    pttButton.disabled = true;
+                }
+            };
 
-    function startTalking() {
-      if (localStream) {
-        console.log('Talking...');
-        if (dataChannel && dataChannel.readyState === 'open'){
-          dataChannel.send("PTT_ON");
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            if (socket.id) {
+                socket.emit('offer', {
+                    offer: peerConnection.createOffer()
+                        .then(offer => peerConnection.setLocalDescription(offer))
+                        .then(() => peerConnection.localDescription),
+                    roomId: roomId
+                });
+            }
         }
-      }
-    }
 
-    function stopTalking() {
-      if (localStream) {
-        console.log('Stopped talking.');
-        if (dataChannel && dataChannel.readyState === 'open'){
-          dataChannel.send("PTT_OFF");
+        function startTalking() {
+            console.log('Talking...');
         }
-      }
-    }
 
-  </script>
+        function stopTalking() {
+            console.log('Stopped talking.');
+        }
+
+    </script>
 </body>
 </html>
 
