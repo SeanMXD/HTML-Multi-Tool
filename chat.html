@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Peer-to-Peer Walkie-Talkie</title>
+<style>
+body {
+  font-family: sans-serif;
+  text-align: center;
+  padding: 20px;
+}
+#status {
+  margin-bottom: 10px;
+}
+#startButton {
+  padding: 10px 20px;
+  font-size: 16px;
+  cursor: pointer;
+}
+#pttButton {
+  padding: 50px;
+  font-size: 24px;
+  cursor: pointer;
+  border-radius: 50%;
+  background-color: lightgray;
+}
+#pttButton.disabled {
+  background-color: #eee;
+  cursor: default;
+}
+
+</style>
+</head>
+<body>
+  <h1>Peer-to-Peer Walkie-Talkie</h1>
+  <div id="status">Initializing...</div>
+  <button id="startButton">Start Connection</button>
+  <br><br>
+  <button id="pttButton" disabled>Push to Talk</button>
+
+  <script>
+    const statusDiv = document.getElementById('status');
+    const startButton = document.getElementById('startButton');
+    const pttButton = document.getElementById('pttButton');
+
+    let peerConnection;
+    let localStream;
+    let remoteStream;
+    let dataChannel;
+
+    startButton.addEventListener('click', startConnection);
+    pttButton.addEventListener('mousedown', startTalking);
+    pttButton.addEventListener('mouseup', stopTalking);
+
+    async function startConnection() {
+      try {
+        statusDiv.textContent = 'Requesting media access...';
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        statusDiv.textContent = 'Creating peer connection...';
+        peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        peerConnection.onicecandidate = handleIceCandidate;
+        peerConnection.ontrack = handleRemoteStreamAdded;
+        peerConnection.oniceconnectionstatechange = handleConnectionStateChange;
+        peerConnection.ondatachannel = receiveDataChannel;
+
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+        dataChannel = peerConnection.createDataChannel("chat");
+
+        createOffer();
+
+        startButton.disabled = true;
+        pttButton.disabled = false;
+        statusDiv.textContent = 'Ready to talk!';
+      } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        console.error('Error starting connection:', error);
+      }
+    }
+
+    function receiveDataChannel(event){
+      dataChannel = event.channel;
+      dataChannel.onmessage = handleDataChannelMessage;
+    }
+
+    function handleDataChannelMessage(event){
+      console.log("Data channel message: ", event.data);
+    }
+
+    async function createOffer() {
+      try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        const offerString = btoa(JSON.stringify(offer));
+        statusDiv.textContent = `Offer: ${offerString} (Paste this into the other peer's browser)`;
+
+        const answerString = prompt("Paste the answer here:");
+        if(answerString){
+          const answer = JSON.parse(atob(answerString));
+          await peerConnection.setRemoteDescription(answer);
+        }
+
+      } catch (error) {
+        console.error('Error creating offer:', error);
+        statusDiv.textContent = `Error creating offer: ${error.message}`;
+      }
+    }
+
+    async function handleIceCandidate(event) {
+      if (event.candidate) {
+        // In a real-world scenario, you'd send this to the other peer via a signaling server.
+        // For this simplified example, we'll just log it.
+        console.log('ICE candidate:', event.candidate);
+      }
+    }
+
+    function handleRemoteStreamAdded(event) {
+      remoteStream = event.streams[0];
+      //In a real application, you would attach the remote stream to an audio element.
+      console.log("Remote stream added.");
+    }
+
+    function handleConnectionStateChange() {
+      statusDiv.textContent = `Connection state: ${peerConnection.iceConnectionState}`;
+      if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'closed') {
+        startButton.disabled = false;
+        pttButton.disabled = true;
+      }
+    }
+
+    function startTalking() {
+      if (localStream) {
+        console.log('Talking...');
+        if (dataChannel && dataChannel.readyState === 'open'){
+          dataChannel.send("PTT_ON");
+        }
+      }
+    }
+
+    function stopTalking() {
+      if (localStream) {
+        console.log('Stopped talking.');
+        if (dataChannel && dataChannel.readyState === 'open'){
+          dataChannel.send("PTT_OFF");
+        }
+      }
+    }
+
+  </script>
+</body>
+</html>
+
