@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Peer-to-Peer Walkie-Talkie</title>
+    <title>Peer-to-Peer Walkie-Talkie (Mute/Unmute)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -19,43 +19,41 @@
             cursor: pointer;
         }
 
-        #pttButton {
-            padding: 50px;
+        #muteButton {
+            padding: 20px 40px;
             font-size: 24px;
             cursor: pointer;
-            border-radius: 50%;
             background-color: lightgray;
         }
 
-        #pttButton.disabled {
+        #muteButton.muted {
             background-color: #eee;
-            cursor: default;
         }
 
         #remoteAudio {
-            display: none; /* Hide audio element initially */
+            display: none;
         }
 
-        #roomIdInput{
-          margin-bottom: 10px;
+        #roomIdInput {
+            margin-bottom: 10px;
         }
 
     </style>
 </head>
 <body>
-    <h1>Peer-to-Peer Walkie-Talkie</h1>
+    <h1>Peer-to-Peer Walkie-Talkie (Mute/Unmute)</h1>
     <input type="text" id="roomIdInput" placeholder="Enter Room ID">
     <div id="status">Initializing...</div>
     <button id="startButton">Start Connection</button>
     <br><br>
-    <button id="pttButton" disabled>Push to Talk</button>
+    <button id="muteButton">Mute</button>
     <audio id="remoteAudio" autoplay></audio>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
         const statusDiv = document.getElementById('status');
         const startButton = document.getElementById('startButton');
-        const pttButton = document.getElementById('pttButton');
+        const muteButton = document.getElementById('muteButton');
         const remoteAudio = document.getElementById('remoteAudio');
         const roomIdInput = document.getElementById('roomIdInput');
 
@@ -64,10 +62,10 @@
         let remoteStream;
         let socket;
         let roomId;
+        let muted = false;
 
         startButton.addEventListener('click', startConnection);
-        pttButton.addEventListener('mousedown', startTalking);
-        pttButton.addEventListener('mouseup', stopTalking);
+        muteButton.addEventListener('click', toggleMute);
 
         async function startConnection() {
             try {
@@ -81,7 +79,7 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
                 statusDiv.textContent = 'Connecting to signaling server...';
-                socket = io('https://socket-io-chat-h9jt.onrender.com'); // Using a publicly available server.
+                socket = io('https://socket-io-chat-h9jt.onrender.com');
 
                 socket.on('connect', () => {
                     statusDiv.textContent = 'Connected to signaling server. Joining room...';
@@ -105,15 +103,15 @@
                 });
 
                 socket.on('ice-candidate', async (candidate) => {
-                    try{
+                    try {
                         await peerConnection.addIceCandidate(candidate);
-                    } catch (e){
+                    } catch (e) {
                         console.error('Error adding ice candidate', e);
                     }
                 });
 
                 startButton.disabled = true;
-                pttButton.disabled = false;
+                muteButton.disabled = false;
                 statusDiv.textContent = 'Ready to talk!';
 
             } catch (error) {
@@ -142,7 +140,7 @@
                 statusDiv.textContent = `Connection state: ${peerConnection.iceConnectionState}`;
                 if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'closed') {
                     startButton.disabled = false;
-                    pttButton.disabled = true;
+                    muteButton.disabled = true;
                 }
             };
 
@@ -158,15 +156,19 @@
             }
         }
 
-        function startTalking() {
-            console.log('Talking...');
-        }
+        function toggleMute() {
+            muted = !muted;
+            if (localStream) {
+                localStream.getTracks().forEach(track => {
+                    if (track.kind === 'audio') {
+                        track.enabled = !muted;
+                    }
+                });
+            }
+            muteButton.textContent = muted ? "Unmute" : "Mute";
+            muteButton.classList.toggle('muted', muted);
 
-        function stopTalking() {
-            console.log('Stopped talking.');
         }
-
     </script>
 </body>
 </html>
-
